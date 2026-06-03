@@ -1,0 +1,157 @@
+---
+title: "MovieLens Project"
+author: "Henrik B. Sørensen"
+date: "2026-06-03"
+output: pdf_document
+toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\newpage
+
+# Introduction
+This paper is the MovieLens Project for the Data Science: Capstone, HarvardX PH125.9x. A course in Machine Learning based on the R programming language. 
+
+In this project, I will analyze a (limited) dataset for movie ratings and attempt to develop a model for predicting the rating of specific movies using a limited training set. Having created a model, I will test it using the test dataset. Overall, the steps performed can be summarized into: 
+
+* Setup the environment
+  + Install necessary libraries (if missing)
+  + Include necessary libraries
+* Prepare the dataset for initial analysis
+  + Download dataset (if missing) and unpack
+  + Split the dataset into training set/test set
+* Analyze and filter the dataset
+  + Visualize data datasets to identify "noise"
+  + Filter out outliers to remove "noise"
+  + Visualize the data trends to come up with a plan on how to develop the model
+* Model Development
+* Model Testing and Verification
+* Model Extension and Testing/Verification
+* Model Analysis
+* Conclusion
+  
+## Project Goal
+The goal of this project is to come up with a come up with a model with an RMSE (Root Mean Square Error) < 0.86490 (or as low as possible) for predicting movie ratings based on genres (and analyze if the model can be optimized when taking tags and timestamps into account: 
+
+Could there be a correlation between:
+
+* rating and genre?
+* rating and month/time of year?
+* rating and tags?
+
+### Disclaimer: 
+The R code in this project is not optimized for speed and/or memory layout in any way. It is written for functionality and readability. Also, the code will attempt to use the "download if missing" and "install if missing" approach to both datasets and libraries. 
+
+\newpage
+
+## Data set introduction
+Before moving on to the actual analysis and R programming, let's take a look at the actual data itself: 
+[Click here to download the raw dataset](https://files.grouplens.org/datasets/movielens/ml-10m.zip). 
+When uncompressed, the dataset consists of 3 files (when ignoring the Readme.html description file and support files): movies.dat, ratings.dat and tags.dat (though, not used in the example). 
+All files are in the csv format delimited by ::.
+
+### movies.dat
+This file holds a "database" of movies, which have been set up for rating in the form of a text file: 
+An example line of this is "1::Toy Story  (1995)::Adventure|Animation|Children|Comedy|Fantasy".
+
+Which is to be read in the format of: 
+```{r, layout="l-body-outset", echo=FALSE, warning=FALSE, message=FALSE}
+library(knitr)
+
+movies_tab <- matrix(
+  c(1, "Toy Story (1995)",
+    "Adventure|Animation|Children|Comedy|Fantasy"),
+  ncol = 3,
+  byrow = TRUE
+)
+colnames(movies_tab) <- c("movieId", "title", "genres")
+kable(head(movies_tab))
+
+name <- 'Dimmer'
+
+```
+
+The genres column needs to be split into several columns and loaded into another table for further analysis.
+
+This table/dataset holds 9000055 rows. 
+
+
+### ratings.dat
+This file holds a "database" of ratings, which have been given for the listed movies in the form of a text file: 
+An example line of this is "1::122::5::838985046".
+
+Which is to be read in the format of: 
+```{r, layout="l-body-outset", echo=FALSE, warning=FALSE, message=FALSE}
+library(knitr)
+library(anytime)
+
+ratings_tab <- data.frame(
+  userId = 1, 
+  movieId = 122, 
+  rating = 5, 
+  Timestamp = as.POSIXct(838985046, origin = "1970-01-01", tz = "UTC")
+)
+colnames(ratings_tab) <- c("userId", "movieId", "rating", "Timestamp")
+kable(head(ratings_tab))
+```
+
+There's a hard one directional coupling between the ratings (movieId) and movies (movieId). A movie must be present for it to be rated. 
+
+This table/dataset holds 10000054 rows.
+
+### tags.dat
+This file holds a "database" of tags connected to the movies by users in the form of a text file: 
+An example line of this is "15::4973::excellent!::1215184630".
+
+
+Which is to be read in the format of: 
+```{r, layout="l-body-outset", echo=FALSE, warning=FALSE, message=FALSE, results='asis'}
+library(knitr)
+
+ratings_tab <- data.frame(
+  userId = 15,
+  movieId = 4973,
+  Tag = "excellent!",
+  Timestamp = as.POSIXct(1215184630, origin = "1970-01-01", tz = "UTC")
+)
+
+kable(head(ratings_tab))
+
+cat(name)
+```
+
+There's a hard one directional coupling between the tags (movieId, userId), the rating (movieId, userId) and movies (movieId). A movie must be present for it to be rated. 
+
+This table/dataset holds 10000054 rows.
+
+Please note, that the ratings table data is not mandatory for the movie ratings and was not included in the example code provided. However, we'll explore, if there's a connection between tags and ratings later. 
+
+## Environment Setup
+The project was done entirely in RStudio 2026.05.0+218 "Golden Wattle" for windows with corresponding R version 4.5.2 on a Windows 11 Home Edition. Required tinytex was also installed following instructions provided by RStudio. 
+The project makes use of several R packages, which are required for the R code to run. Keeping in the spirit of the "install if missing" philosophy, we'll make use of the following syntax in order to test for the existence of a library and install it if missing: 
+
+```{r, layout="l-body-outset", eval=FALSE}
+
+if(!require(<library name>)) 
+  install.packages("<library name>", repos = "http://cran.us.r-project.org")
+
+```
+
+The require function will return FALSE, if the desired library has not been installed. 
+For example, installing tidyverse would look like:
+
+```{r, layout="l-body-outset", eval=FALSE}
+
+if(!require(tidyverse)) 
+  install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+
+```
+
+
+
+\newpage
+# Method
+
