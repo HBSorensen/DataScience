@@ -443,7 +443,7 @@ RMSE <- function(true_ratings, predicted_ratings) {
 }
 ```
 
-The aim is to get below **0.86490**.
+The aim is to get below **`r sprintf("%.5f", target_rmse)`**.
 
 
 ## Model 1 — Baseline: Overall Mean
@@ -460,7 +460,7 @@ rmse_m1 <- RMSE(val_set$rating, mu)
 cat("Model 1 RMSE (baseline):", rmse_m1, "\n")
 ```
 
-As expected, this is well above the target of 0.86490. The global mean ignores all information about individual movies and users. So, this simple model is not fitting our needs. 
+As expected, this is well above the target of `r sprintf("%.5f", target_rmse)`. The global mean ignores all information about individual movies and users. So, this simple model is not fitting our needs. 
 
 ## Model 2 — Regularized Movie Bias
 
@@ -595,15 +595,15 @@ Each step provides a meaningful improvement:
 Before scoring against `final_holdout_test`, Model 3 is re-fitted on the **full `edx` data set** (both the `train_set` and `val_set` combined). This gives the model as much data as possible for the final prediction while still not including the `final_holdout_test` data set-
 
 ```{r final-eval, cache=TRUE, results='asis'}
-# Refit overall mean on full edx
+# Refit overall mean on full edx data set
 mu_final <- mean(edx$rating)
 
-# Refit regularized movie bias on full edx
+# Refit regularized movie bias on full edx data set
 b_i_final <- edx %>%
   group_by(movieId) %>%
   summarise(b_i = sum(rating - mu_final) / (n() + lambda_m3), .groups = "drop")
 
-# Refit regularized user bias on full edx (conditioned on movie bias)
+# Refit regularized user bias on full edx data set (conditioned on movie bias)
 b_u_final <- edx %>%
   left_join(b_i_final, by = "movieId") %>%
   group_by(userId) %>%
@@ -631,13 +631,13 @@ knitr::kable(
     Lambda             = lambda_m3,
     RMSE_validation    = round(rmse_m3,    5),
     RMSE_final_holdout = round(rmse_final, 5),
-    Target_met         = ifelse(rmse_final < 0.86490, "Yes", "No")
+    Target_met         = ifelse(rmse_final < target_rmse, "Yes", "No")
   ),
   caption = "Final model evaluation results", row.names = FALSE
 )
 ```
 The final RMSE on `final_holdout_test` is **`r round(rmse_final, 5)`**. This
-**`r ifelse(rmse_final < target_rmse, "meets", "does not meet")`** the target of 0.86490.
+**`r ifelse(rmse_final < target_rmse, "meets", "does not meet")`** the target of `r sprintf("%.5f", target_rmse)`.
 The close agreement between the validation RMSE (`r round(rmse_m3, 5)`) and the final holdout RMSE confirms that the model generalizes well and was not over-tuned to the validation set.
 
 \newpage
