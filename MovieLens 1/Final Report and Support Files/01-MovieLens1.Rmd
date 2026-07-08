@@ -23,7 +23,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 # Introduction
 This paper is the MovieLens Project for the Data Science: Capstone, HarvardX PH125.9x. A course in Machine Learning based on the R programming language.
 
-In this project, I will analyze a (limited) data set for movie ratings containing 9 million movie ratings (though called 10M) and develop a model for predicting the rating of a specific movie by a specific user using a regularized bias model. The data set will be split into a training set (used during development) and a test set (used for the final test) in a 90%/10% split - 90% of the data going to the training set. During the model development, I will make multiple iterations gradually improving each model in order to get below my target of **0.86490**. 
+In this project, I will analyze a (limited) data set for movie ratings containing around 10 million movie ratings and develop a model for predicting the rating of a specific movie by a specific user using a regularized bias model. The data set will be split into a training set (used during development) and a test set (used for the final test) in a 90%/10% split - 90% of the data going to the training set. During the model development, I will make multiple iterations gradually improving each model in order to reach my target of an RMSE below  **0.86490**. 
 
 
 Having created the model, I will test it against a held-out test data set that was never used during development or tuning. Overall, the steps performed can be summarized into:
@@ -289,6 +289,7 @@ Now, that we have the data split up, let's take a closer look at the actual data
 
 ## Data Investigation and Visualization
 In order to start making the model, we need to know what, we are dealing with. So, let's investigate.
+
 ### Data set Size
 
 ```{r dims, results='asis'}
@@ -341,7 +342,7 @@ edx %>%
 ```
 The distribution is heavily skewed: a small number of movies are rated very frequently while many are rarely rated at all. This is an important observation: a movie with only 3 ratings should not be trusted as much as one with 5,000 ratings when estimating its average. This motivates the use of regularization[^1] in the model.
 
-[^1]: Regularization helps to improve the model's generalization and make accurate predictions.
+[^1]: Regularization helps to improve the model's generalization and make accurate predictions by accounting for skewed data.
 
 ### Ratings per User
 Next, we look into how the ratings are distributed in relation to users. E.g. if most of the ratings are done by a limited number of users, this may cause a bit of skew in the result - some users could be prolific raters while others could have rated only a handful of movies.
@@ -419,11 +420,13 @@ Genre does have some effect — Film-Noir and Documentary rate highest while Hor
 # Model Development
 Now, that we have had a deeper look into the data itself, it's time to start developing a model for the actual prediction. This is going to be a step by step approach. 
 But first, we need the training/validation data sets.
+
 ## Internal Train / Validation Split
 First we split the data further. This is done in order to be able to tune the regularization parameter $\lambda$ without touching `final_holdout_test`. So, a further 90/10 split is created from `edx`:
 
 ```{r val-split}
 set.seed(2, sample.kind = "Rounding")
+# Generate the indexes of where to split the data
 val_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
 train_set <- edx[-val_index, ]
 val_set   <- edx[val_index, ]
@@ -435,7 +438,7 @@ val_set <- val_set %>%
 ```
 
 ## RMSE Function
-All models are evaluated using the same RMSE function:
+All models are evaluated using the same RMSE function. So, we define it:
 
 ```{r rmse-fn}
 RMSE <- function(true_ratings, predicted_ratings) {
@@ -479,21 +482,27 @@ $$b_i = \frac{1}{n_i + \lambda} \sum_{u \in \mathcal{U}_i}(y_{u,i} - \mu)$$
 The optimal $\lambda$ is found by trying a range of values and picking the one that gives the lowest RMSE on `val_set`:
 
 ```{r model2, cache=TRUE, results='asis'}
+# Setup list of lambdas to try
 lambdas <- seq(0, 10, by = 0.25)
 
+# Calculation of the RMSEs for different lambda values
 rmse_m2_vec <- sapply(lambdas, function(lambda) {
+  # Calculate the adjustment values in order to regularize the movie ratings per movie
   b_i <- train_set %>%
     group_by(movieId) %>%
     summarise(b_i = sum(rating - mu) / (n() + lambda), .groups = "drop")
 
+  # Calculate the predicted rating using the bias
   pred <- val_set %>%
     left_join(b_i, by = "movieId") %>%
     mutate(pred = pmin(pmax(mu + b_i, 0.5), 5)) %>%
     pull(pred)
 
+   # Calculate the RMSE
   RMSE(val_set$rating, pred)
 })
 
+# Print out the lambda value which gives the smallest RMSE and the value itself
 lambda_m2 <- lambdas[which.min(rmse_m2_vec)]
 rmse_m2   <- min(rmse_m2_vec)
 cat("Model 2 best lambda:", lambda_m2, "\n")
@@ -501,6 +510,7 @@ cat("Model 2 RMSE (movie bias):", rmse_m2, "\n")
 ```
 
 ```{r model2-plot, fig.cap="RMSE as a function of lambda for the movie-bias model.", out.width='1.0\\textwidth', fig.pos='H'}
+# Plot the Lambda vs. RMSE
 qplot(lambdas, rmse_m2_vec, geom = "line",
       xlab = "Lambda", ylab = "RMSE",
       main = "Model 2: RMSE vs Lambda (movie bias)")+
@@ -524,16 +534,19 @@ $$b_u = \frac{1}{n_u + \lambda} \sum_{i \in \mathcal{I}_u}(y_{u,i} - \mu - b_i)$
 The same $\lambda$ is used for both $b_i$ and $b_u$ and is tuned jointly:
 
 ```{r model3, cache=TRUE, results='asis'}
+# Calculation of the RMSEs for different lambda values
 rmse_m3_vec <- sapply(lambdas, function(lambda) {
+  # Calculate the adjustment values in order to regularize the movie ratings per movie for the movie bias
   b_i <- train_set %>%
     group_by(movieId) %>%
     summarise(b_i = sum(rating - mu) / (n() + lambda), .groups = "drop")
-
+  # Calculate the adjustment values in order to regularize the movie ratings per movie for the user bias
   b_u <- train_set %>%
     left_join(b_i, by = "movieId") %>%
     group_by(userId) %>%
     summarise(b_u = sum(rating - mu - b_i) / (n() + lambda), .groups = "drop")
 
+  # Calculate the predicted rating using the biases
   pred <- val_set %>%
     left_join(b_i, by = "movieId") %>%
     left_join(b_u, by = "userId") %>%
@@ -544,9 +557,11 @@ rmse_m3_vec <- sapply(lambdas, function(lambda) {
     ) %>%
     pull(pred)
 
+  # Calculate the RMSE
   RMSE(val_set$rating, pred)
 })
 
+# Print out the lambda value which gives the smallest RMSE and the value itself
 lambda_m3 <- lambdas[which.min(rmse_m3_vec)]
 rmse_m3   <- min(rmse_m3_vec)
 cat("Model 3 best lambda:", lambda_m3, "\n")
@@ -620,6 +635,7 @@ pred_final <- final_holdout_test %>%
   ) %>%
   pull(pred)
 
+# Print out the final RMSE
 rmse_final <- RMSE(final_holdout_test$rating, pred_final)
 cat("Final RMSE on final_holdout_test:", rmse_final, "\n")
 ```

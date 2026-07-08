@@ -206,8 +206,12 @@ edx %>%
 ####################################################################################################################
 # Splitting the training set (edx) further into a training and validation set.
 set.seed(2, sample.kind = "Rounding")
+# Generate the indexes to use in the partition
 val_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+# Divide data: 
+# Train set = values indexed by the indexes not in the generated list
 train_set <- edx[-val_index, ]
+# Validation set = values indexed by the indexes in the generated list
 val_set   <- edx[val_index, ]
 
 # Ensure val_set only contains movies and users seen in train_set
@@ -247,7 +251,7 @@ lambdas <- seq(0, 10, by = 0.25)
 
 # Calculation of the RMSEs for different lambda values
 rmse_m2_vec <- sapply(lambdas, function(lambda) {
-  # Calculate the adjustment values in order to regularize the movie ratings per movie
+  # Calculate the adjustment values in order to regularize the movie ratings per movie for the movie bias
   b_i <- train_set %>%
     group_by(movieId) %>%
     summarise(b_i = sum(rating - mu) / (n() + lambda), .groups = "drop")
@@ -258,6 +262,7 @@ rmse_m2_vec <- sapply(lambdas, function(lambda) {
     mutate(pred = pmin(pmax(mu + b_i, 0.5), 5)) %>%
     pull(pred)
   
+  # Calculate the RMSE
   RMSE(val_set$rating, pred)
 })
 
@@ -284,12 +289,12 @@ if (rmse_m2 <= target_rmse)
 ####################################################################################################################
 # Calculation of the RMSEs for different lambda values (reusing the lambdas vector previously created)
 rmse_m3_vec <- sapply(lambdas, function(lambda) {
-  # Calculate the adjustment values in order to regularize the movie ratings per movie
+  # Calculate the adjustment values in order to regularize the movie ratings per movie for the movie bias
   b_i <- train_set %>%
     group_by(movieId) %>%
     summarise(b_i = sum(rating - mu) / (n() + lambda), .groups = "drop")
   
-  # Calculate the adjustment values in other to regularize the user ratings  
+  # Calculate the adjustment values in order to regularize the movie ratings per movie for the user bias 
   b_u <- train_set %>%
     left_join(b_i, by = "movieId") %>%
     group_by(userId) %>%
@@ -306,6 +311,7 @@ rmse_m3_vec <- sapply(lambdas, function(lambda) {
     ) %>%
     pull(pred)
   
+  # Calculate the RMSE
   RMSE(val_set$rating, pred)
 })
 
