@@ -383,3 +383,125 @@ if (!file.exists(lock_file)){
 
 
 # Data Analysis
+Having downloaded all files (approximately 1.88GB), let's start looking into the various files. 
+
+## geomag_kp_gfz.txt
+This file holds data dating back to January 1st 1932 measuring sunspots and geomagnetic information. It is a text file with comments identified by #. An extract of this is (modified to fix page): 
+
+```text
+# The parameters in each line are:
+#YYY MM DD  days  days_m  Bsr dB    Kp1    Kp2    Kp3    Kp4    Kp5    Kp6    Kp7    
+Kp8  ap1  ap2  ap3  ap4  ap5  ap6  ap7  ap8    Ap  SN F10.7obs F10.7adj D
+1932 01 01     0     0.5 1352 10  3.333  2.667  2.333  2.667  3.333  2.667  3.333  
+3.333   18   12    9   12   18   12   18   18    15  22     -1.0     -1.0 2
+```
+From this, we see, that there are 28 columns in the row. Taking inspiration from the header of the file itself, it seems, that we can limit in information, we need: Kp and ap are three-hourly values. However, the Ap is the mean value of the planetary amplitude (Kp are derived from ap). SN is the "International Solar Spot Number". F10.7x are the 10.7 cm Solar Flux. So, we will limit the data to date (year/month/day), Ap (mean), SN and F10.7adj.
+
+Processing the file requires basically 3 steps: 
+
+* Reading the raw file
+* Removing the comments
+* Parsing each data line into a table while filtering
+
+
+```{r data-parsing-geomag_kp, cache=TRUE, results='asis'}
+# Read raw data lines from file
+geomag_kp_raw <- readLines(geomag_kp_gfz_data_file)
+# Filter out the lines starting with '#'
+geomag_kp_raw <- geomag_kp_raw[!startsWith(geomag_kp_raw, "#")]
+
+# 28 columns confirmed against the file's own header/format string:
+# "YYY MM DD days days_m Bsr dB Kp1..Kp8 ap1..ap8 Ap SN F10.7obs F10.7adj D"
+geomag_data <- read_table(
+  # Input data from filtered lines
+  I(geomag_kp_raw),
+  # Setup column names
+  col_names = c(
+    "year", "month", "day", "days", "days_m", "bsr", "dB",
+    paste0("Kp", 1:8), paste0("ap", 1:8),
+    "Ap", "SN", "F107obs", "F107adj", "definitive"
+  ),
+  col_types = cols(.default = "d")
+) %>%
+  # Remove all pre 1970 data - we only have data from 1975 elsewhere. 
+  filter(year >= 1970) %>%
+  # Only use subset of columns
+  select(year, month, day, Ap, SN, F10.7Adj = F107adj)
+
+# Display as a formatted table
+knitr::kable(
+  head(geomag_data),
+  caption = "Geomagnetic data"
+)
+
+cat(format(nrow(geomag_data), big.mark = ","), " rows of Geomagnetic data\n")
+
+```
+
+Please note, that instead of using the 1975 (which is the limit from other data sources used), we use the 1970: The Earth is a very large system, so the time between an external influence to a reaction might be counted in years. We will leave the data in the geomag_data table for now, and move on to the sunspot_silo.
+
+## sunspot_silso.csv
+The sunspot_silso file is a basic comma separated file without any headers: 
+```text
+1818;01;01;1818.001;  -1; -1.0;   0;1
+```
+However, when you visit [Info](https://www.sidc.be/SILSO/infosndtot) - https://www.sidc.be/SILSO/infosndtot, we'll get the description of the file: 
+```text
+-------------------------------------------------------------------------------
+CSV
+-------------------------------------------------------------------------------
+Filename: SN_d_tot_V2.0.csv
+Format: Comma Separated values (adapted for import in spreadsheets)
+The separator is the semicolon ';'.
+
+Contents:
+Column 1-3: Gregorian calendar date
+- Year
+- Month
+- Day
+Column 4: Date in fraction of year.
+Column 5: Daily total sunspot number. A value of -1 indicates that no number is available for 
+          that day (missing value).
+Column 6: Daily standard deviation of the input sunspot numbers from individual 
+          stations.
+Column 7: Number of observations used to compute the daily value.
+Column 8: Definitive/provisional indicator. '1' indicates that the value is definitive. '0' 
+          indicates that the value is still provisional.
+```
+
+Looking at this info, we start by seeing, that they use the Gregorian calender (introduced by Pope Gregory XIII in 1582), which is good, because that's the most used calendar in the world. No conversion is necessary. Based on this info, we can see, that we need year, month, day and total number of sunspots filtering out missing numbers and provisional numbers. 
+
+```{r data-parsing-sunspot, cache=TRUE, results='asis'}
+# Read raw data lines from file
+sunspots_raw <- readLines(sunspot_silso_data_file)
+
+# 8 columns confirmed against the file's info file. 
+# Data is delimited by ;
+sunspots_data <- read_delim(
+  # Input data from the rawlines
+  I(sunspots_raw),
+  # Delimiter is ;
+  delim = ";",
+  # Setup column names
+  col_names = c(
+    "year", "month", "day", "dateFraction", "total", "stdDev", "noOfStations", 
+    "definitive"),
+  col_types = cols(.default = "d"),
+  # Some of the columns are padded with whitespaces, so these need to be removed
+  trim_ws = TRUE
+) %>%
+  # Remove all pre 1970 data - we only have data from 1975 elsewhere. 
+  filter(year >= 1970 & definitive > 0) %>%
+  select (year, month, day, total)
+
+# Display as a formatted table
+knitr::kable(
+  head(sunspots_data),
+  caption = "Sunspot data"
+)
+
+cat(format(nrow(sunspots_data), big.mark = ","), " rows of Sunspot data\n")
+
+```
+
+Again, please note, that instead of using the 1975 (which is the limit from other data sources used), we use the 1970: The Earth is a very large system, so the time between an external influence to a reaction might be counted in years.
