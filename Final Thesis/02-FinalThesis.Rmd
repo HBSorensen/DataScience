@@ -117,8 +117,9 @@ To analyse the data and perform all the analysis, I intend to perform on the dat
 # car       - supporting further analysis and for testing the model
 # lmtest    - checking the model and assumptions
 # tinytex   - supporting the formatting of the resulting report
+# ncdf4     - parsing Net CDF files
 required_packages <- c("here", "httr", "readr", "dplyr", "tidyr", "lubridate", "purrr", "slider", 
-                       "ggplot2", "car", "lmtest", "tinytex")
+                       "ggplot2", "car", "lmtest", "tinytex", "ncdf4")
 
 # Set default URLs to point to CRAN Mirror (to simplify installing packages)
 if (length(getOption("repos")) == 0 || getOption("repos")["CRAN"] == "@CRAN@")
@@ -383,9 +384,11 @@ if (!file.exists(lock_file)){
 
 
 # Data Analysis
-Having downloaded all files (approximately 1.88GB), let's start looking into the various files. 
+Having downloaded all files (approximately 1.88GB), let's start looking into the various files. We'll start by having a look at the raw data file by file.
 
-## geomag_kp_gfz.txt
+## Parsing the data sources
+
+### geomag_kp_gfz.txt
 This file holds data dating back to January 1st 1932 measuring sunspots and geomagnetic information. It is a text file with comments identified by #. An extract of this is (modified to fix page): 
 
 ```text
@@ -440,7 +443,7 @@ cat(format(nrow(geomag_data), big.mark = ","), " rows of Geomagnetic data\n")
 
 Please note, that instead of using the 1975 (which is the limit from other data sources used), we use the 1970: The Earth is a very large system, so the time between an external influence to a reaction might be counted in years. We will leave the data in the geomag_data table for now, and move on to the sunspot_silo.
 
-## sunspot_silso.csv
+### sunspot_silso.csv
 The sunspot_silso file is a basic comma separated file without any headers: 
 ```text
 1818;01;01;1818.001;  -1; -1.0;   0;1
@@ -504,4 +507,197 @@ cat(format(nrow(sunspots_data), big.mark = ","), " rows of Sunspot data\n")
 
 ```
 
-Again, please note, that instead of using the 1975 (which is the limit from other data sources used), we use the 1970: The Earth is a very large system, so the time between an external influence to a reaction might be counted in years.
+Again, please note, that instead of using the 1975 (which is the limit from other data sources used), we use the 1970: The Earth is a very large system, so the time between an external influence to a reaction might be counted in years. In case of this "delay" being counted in years, one discuss whether or not, this "warning" would be relevant (on one hand, an early warning allows for preparation, on the other, political interests may not take this warning into account). 
+
+### `ugs_[year]_[month]_[day].csv`
+The UGS data are a series of .csv files containing the information about the Earthquakes: 
+```{r, ugs data overview, layout="l-body-outset", echo=FALSE}
+library(knitr)
+data_urls_tab <- matrix(
+c("time", "Time stamp of the logged event", "Yes",
+  "latitude", "Latitude of the center of the event", "N/A",
+  "longitude", "Longitude of the center of the event", "N/A",
+  "depth", "Depth of the event", "N/A",
+  "mag", "Magnitude of the event", "Yes",
+  "magType", "Magnitudetype used for internal filtering", "N/A",
+  "nst", "Number of seismic stations used to determine location", "N/A",
+  "gap", "Largest azimuth gap between adjecent stations",  "N/A",
+  "dmin", "Horizontal distance from epicenter to nearest station", "N/A",
+  "rms", "RMS value of the travel time", "N/A",
+  "net", "ID of the preferred data contributor","N/A",
+  "id", "Unique ID", "N/A",
+  "updated", "Last time of update", "N/A",
+  "place", "Geographical name of the epicenter", "N/A",
+  "type", "Type of the seismic event", "Yes, filtering",
+  "horizontalError", "Uncertainty of distance the epicenter", "N/A",
+  "depthError", "Uncertainty of depth the epicenter",	"N/A",
+  "magError", "Uncertainty of magnitude the epicenter",	"N/A",
+  "magNst", "Total number of seismic station reporting the event", "N/A",
+  "status", "Status of the event", "Yes, filtering",
+  "locationSource", "Original reporter of the location this event", "N/A",
+  "magSource", "Original reporter of the magnitude this event", "N/A"
+),  ncol = 3, byrow = TRUE
+)
+colnames(data_urls_tab) <- c("Column", "Description", "Included?")
+kable(data_urls_tab, row.names = FALSE)
+```
+
+This clearly shows, that we only need 4 columns (time, magnitude for further processing and type, status for filtering). For filtering, we're only interested in type = "earthquake", since we do not care about man made events such as quarrying for stone. The status field itself can hold 3 values: “automatic”, “reviewed”, “deleted”. For this analysis, I'll treat “automatic” and “reviewed” the same - whether or not the staff hasn't reviewed it yet, so these will be included. "deleted" will not be used. 
+
+Now, we already have the files underneath the data/ugs folder, so we need to traverse all 621 (at the time of downloading the data) files and add all of the data to a filtered table: 
+```{r data-parsing-ugs-data, cache=TRUE, results='asis'}
+# Force the current position to be the folder of the current file
+knitr::opts_knit$set(root.dir = dirname(knitr::current_input(dir = TRUE)))
+# Get the list of csv files in folder
+ugs_files <- list.files("data/ugs", pattern = "\\.csv$", full.names = TRUE)
+
+# Read only the columns we need from every file, then combine into a single table
+ugs_data <- map_dfr(
+  ugs_files,
+  ~ read_csv(
+      .x,
+      col_types = cols_only(
+        time   = col_datetime(format = ""),
+        mag    = col_double(),
+        type   = col_character(),
+        status = col_character()
+      )
+  )
+) %>%
+  # Only keep actual earthquakes, and drop "deleted" entries
+  filter(type == "earthquake" & status != "deleted")
+
+# Display as a formatted table
+knitr::kable(
+  head(ugs_data),
+  caption = "UGS data"
+)
+
+cat(format(nrow(ugs_data), big.mark = ","), " rows of UGS data\n")
+```
+
+### NOAA data
+The NOAA data is a bit more challenging from a data wrangling point of view: The data format changes by 2020 3rd month from a text format to something resembling a binary format (NetCDF - Network Common Data Form). Luckily, R has support for parsing these binary files. 
+
+The text format is a combination of multiple csv files with a description "header" inside a single file. Digging deeper into the data, it seems that the newer satellites renamed the channels from xs/xl to A_AVG/B_AVG. So, we need to compensate for this:
+
+```{r data-parsing-noaa-data-1, cache=TRUE, results='asis'}
+# Get the list of csv files in subfolders
+noaa_files1 <- list.files("data/data/goes-space-environment-monitor/access/avg",
+                          pattern = "\\.csv$", full.names = TRUE, recursive = TRUE)
+
+# Read only the columns we need from every file, then combine into a single table
+# Take into account, that newer satellite data has changed format: 
+#  goes08–goes12 : time, xs, xl
+#  goes13–goes15 : time, A_AVG, B_AVG
+
+#Create function for parsing goes file. 
+read_goes_file <- function(path) {
+  # Read lines from file
+  raw <- readLines(path)
+
+  # Skip anything preceeding the "data:" marker
+  data_start <- which(trimws(raw) == "data:") + 1
+  # Extract the header from the data block. 
+  header <- raw[data_start]
+  # Extract the actual data
+  body <- raw[data_start:length(raw)]
+
+  # Old satelittes use the "time_tag,xs,xl" tags, so we know, that this is the
+  # old satellite data.
+  if (startsWith(header, "time_tag,xs,xl")) {
+    
+    # Data columns are already named xs/xl
+    parsed <- read_csv(
+      # Read data as-is
+      I(body),
+      col_types = cols(
+        # Extract time in the specific format
+        time_tag = col_datetime(format = "%Y-%m-%d %H:%M:%OS"),
+        xs = col_double(),
+        xl = col_double()
+      ),
+      na = "-99999.0"
+    )
+  } else {
+    # Newer satellites: A_AVG/B_AVG replace xs/xl, plus quality-flag columns we don't need
+    parsed <- read_csv(
+      # Read data as-is
+      I(body),
+      col_types = cols_only(
+        # Extract time in the specific format
+        time_tag = col_datetime(format = "%Y-%m-%d %H:%M:%OS"),
+        A_AVG = col_double(),
+        B_AVG = col_double()
+      ),
+      na = "-99999.0"
+    ) %>%
+      # Rename the new columns to match the old format
+      rename(xs = A_AVG, xl = B_AVG)
+  }
+  
+  # Common for both formats
+  parsed %>%
+    # Rename time stamp column
+    rename(time = time_tag) %>%
+    # Return data
+    select(time, xs, xl) %>%
+    filter(!is.na(xs) & !is.na(xl))
+}
+
+# Parse every file (674 total) and combine into a single table
+goes_data <- map_dfr(noaa_files1, read_goes_file)
+
+# Display as a formatted table
+knitr::kable(
+  head(goes_data),
+  caption = "NOAA data part 1"
+)
+
+cat(format(nrow(goes_data), big.mark = ","), " rows of NOAA data in the first location\n")
+
+```
+
+From 2020 onwards (GOES-16 and GOES-18), NOAA switched to publishing the data as NetCDF files instead of the header/csv format above. The channel columns are renamed again, this time to `xrsa_flux` (previously xs/A_AVG) and `xrsb_flux` (previously xl/B_AVG), missing values are flagged with `-9999` instead of `-99999.0`. The timestamp is stored as seconds since 2000-01-01 12:00:00 UTC rather than a formatted date string. We parse these the same way and append the result onto the existing `goes_data` table:
+
+```{r data-parsing-noaa-data-2, cache=TRUE, results='asis'}
+# Get the list of NetCDF files in subfolders
+noaa_files2 <- list.files("data/platforms/solar-space-observing-satellites/goes",
+                          pattern = "\\.nc$", full.names = TRUE, recursive = TRUE)
+
+# Create function for parsing a single GOES NetCDF file
+read_goes_nc_file <- function(path) {
+  # Open the file, ensuring it is always closed again afterwards
+  nc <- nc_open(path)
+  on.exit(nc_close(nc), add = TRUE)
+
+  # Time is stored as seconds since 2000-01-01 12:00:00 UTC (per the file's own "units" attribute)
+  time_secs <- ncvar_get(nc, "time")
+  time <- ymd_hms("2000-01-01 12:00:00", tz = "UTC") + seconds(time_secs)
+
+  # xrsa_flux/xrsb_flux are the short/long wavelength channels - same as xs/xl above
+  xs <- ncvar_get(nc, "xrsa_flux")
+  xl <- ncvar_get(nc, "xrsb_flux")
+
+  tibble(time = time, xs = xs, xl = xl) %>%
+    # -9999 is this dataset's missing-value sentinel (its own _FillValue, not -99999.0)
+    mutate(xs = na_if(xs, -9999), xl = na_if(xl, -9999)) %>%
+    filter(!is.na(xs) & !is.na(xl))
+}
+
+# Parse every NetCDF file and append the result onto the existing goes_data table
+goes_data <- bind_rows(goes_data, map_dfr(noaa_files2, read_goes_nc_file))
+
+# Display as a formatted table
+knitr::kable(
+  head(goes_data),
+  caption = "NOAA data part 2"
+)
+
+cat(format(nrow(goes_data), big.mark = ","), " rows of NOAA data after adding the second location\n")
+
+```
+
+## Visualization of the data
+Now, that we have the data in the geomag_data, sunspots_data, ugs_data and goes_data tables, we can start taking a look at the data in more details. Let's start visualizing the data on a time line. 
+
