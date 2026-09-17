@@ -1614,39 +1614,35 @@ ggplot(diag_df, aes(x = Fitted, y = Residual)) +
     )
 ```
 
-```{r model-1-tests, cache=TRUE, results='asis'}
+Looking into how, the various factors influence the outcome, we'll use the vif functionality. The vif function returns the generalized variance inflation factors. Meaning, that we get an indication of the amount of the how important, a factor is in the full picture.
 
-# Multicollinearity check. Because the model contains factors, car::vif() reports
-# GENERALIZED variance-inflation factors: an ordinary VIF is defined per coefficient,
-# but a factor spans several dummy columns and its per-dummy VIFs change with whichever
-# level happens to be the baseline. A GVIF treats the whole term as one unit and is
-# invariant to that arbitrary choice.
-#
-# The column taken below, GVIF^(1/(2*Df)), is rescaled so terms with different degrees
-# of freedom are comparable. The (1/Df) power puts it per-coefficient and the remaining
-# square root turns variance inflation into STANDARD ERROR inflation - so this figure is
-# on the sqrt(VIF) scale, not the VIF scale. The familiar cutoffs move accordingly:
-# VIF 5 and 10 correspond to roughly 2.2 and 3.2 here. A value of 1 means no inflation.
+```{r model-1-tests_1, cache=TRUE, results='asis'}
+# Calculate Variance Inflation of the various factors
 vif_values <- car::vif(model_1)
+# Create the table data
 vif_tab <- data.frame(
   Predictor = rownames(vif_values),
   SE_inflation = round(vif_values[, "GVIF^(1/(2*Df))"], 3),
   row.names = NULL
 )
+# Print the table
 knitr::kable(vif_tab, format = "latex", booktabs = TRUE,
              caption = "Generalized variance-inflation factors for Model \\#1, on the standard-error scale",
              label = "vif") %>%
   kableExtra::kable_styling(latex_options = "HOLD_position")
+```
+It seems, that the 
+Let's check to see how the model behaves. Does the model's errors vary, or are they the same across the board? We can use the [Breusch–Pagan test](https://en.wikipedia.org/wiki/Breusch%E2%80%93Pagan_test). 
 
-# Heteroskedasticity: constant residual variance is one of the assumptions behind
-# the standard errors of a linear model.
+```{r model-1-tests_2, cache=TRUE, results='asis'}
+# Calculate the Breusch–Pagan test data
 bp <- lmtest::bptest(model_1)
 cat("Breusch-Pagan test: BP = ", round(unname(bp$statistic), 1),
     ", df = ", unname(bp$parameter),
     ", p = ", format.pval(bp$p.value, digits = 3), "\n", sep = "")
 ```
 
-The residual plot shows the striping that the quantized response makes inevitable - with the raw counts heaped on small round integers, the residuals can only fall on a set of discrete tracks rather than forming an even cloud. The Breusch-Pagan test rejects constant variance, which at this sample size it would do for almost any departure however small, so it is reported for completeness rather than treated as decisive. The variance inflation factors are the more useful check, and they are unremarkable: the predictors are not standing in for one another.
+The residual plot shows the striping that the quantisized response makes inevitable - with the raw counts heaped on small round integers, the residuals can only fall on a set of discrete tracks rather than forming an even cloud. The Breusch-Pagan test rejects constant variance, which at this sample size it would do for almost any departure however small, so it is reported for completeness rather than treated as decisive. The variance inflation factors are the more useful check, and they are unremarkable: the predictors are not standing in for one another.
 
 There is one further assumption that no test in `lmtest` will catch, and it matters more than either of the above: **independence of observations**. It is violated by construction, because most rows share an article with other rows. The consequence is that the standard errors printed by `summary()` are too small - the model has far fewer independent observations than it has rows. It does not bias the coefficients, and it does not affect the held-out RMSE figures used to compare models, which is why those are what this chapter relies on.
 
