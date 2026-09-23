@@ -2028,48 +2028,45 @@ knitr::kable(tone_imp_tab, format = "latex", booktabs = TRUE,
 
 Every tone model so far has been additive. That form carries a strong assumption: that a military actor shifts the tone by the same amount whether the event was a diplomatic consultation or an armed assault, and that being located in one country shifts it by the same amount regardless of what happened there. Stated out loud, that is not obviously true. One would expect the actors and the location to matter *differently* depending on the kind of event.
 
+Adding more variables to the calculations will multiply the columns: e.g. 20 event types with 40 actor roles will result in 800 columns. Fitting the sample data into this will take minutes for this limited data set. So, to take a shortcut, we'll lump actors together thus reducing the number of columns. 
+
 Testing that means interaction terms - letting the effect of the actor depend on the event type, and likewise for the location. The question is not whether such interactions exist; with millions of rows almost any effect will be statistically detectable. The question is whether they **generalize**: does modelling them improve predictions on articles the model has never seen?
 
-```{r tone-interaction-prep, cache=TRUE, results='asis'}
+```{r tone-interaction-prep1, cache=TRUE, results='asis'}
 
-# Interaction terms multiply out: 20 event types crossed with 40 actor roles is 800
-# columns before anything else is added, and fitting that over the full sample took
-# minutes per model. Collapsing the two interacting factors to their commonest 15
-# levels keeps the same question answerable at a fraction of the cost.
+# Function for lumping actors together.
 relump <- function(train_values, n_keep) {
   keep <- head(names(sort(table(train_values), decreasing = TRUE)), n_keep)
-  # These factors were already lumped once when model_data was built, so they may
-  # already carry an "Other" level. Dropping it here stops it being listed twice
-  # when the new levels are assembled below.
   keep <- setdiff(keep, "Other")
   function(x) factor(ifelse(as.character(x) %in% keep, as.character(x), "Other"),
                      levels = c(sort(keep), "Other"))
 }
+```
 
-# The levels to keep are chosen from the fitting data only, then applied unchanged to
-# the test data. This is the stricter of the two approaches used in this report: the
-# earlier lump_top() picks its levels from the whole of model_data, before the split.
-# Neither choice looks at the response, so neither leaks the answer - but selecting
-# levels on the training rows alone is the safer habit, and costs nothing here.
+The levels to keep are chosen from the fitting data only, then applied unchanged to the test data. This is the stricter of the two approaches used in this report: the earlier lump_top() picks its levels from the whole of model_data, before the split. Neither choice looks at the response, so neither leaks the answer - but selecting levels on the training rows alone is the safer habit, and costs nothing here.
+
+
+```{r tone-interaction-prep2, cache=TRUE, results='asis'}
+
+# Lumping actors together
 actor_relump <- relump(fit_set$Actor1Type, 15)
+# Lumping countries together
 geo_relump   <- relump(fit_set$GeoCountry, 15)
 
+# Adding the new columns to the fit/test data
 inter_fit  <- fit_set  %>% mutate(Actor1Small = actor_relump(Actor1Type),
                                   GeoSmall    = geo_relump(GeoCountry))
 inter_test <- test_set %>% mutate(Actor1Small = actor_relump(Actor1Type),
                                   GeoSmall    = geo_relump(GeoCountry))
 
-# A further subsample for fitting: the interaction models are an order of magnitude
-# more expensive than the additive ones, and this keeps the chapter knittable.
+# Reduce the data set for easier processing (for this report only)
 set.seed(6)
 inter_fit <- slice_sample(inter_fit, n = min(60000, nrow(inter_fit)))
 
-# Scoring is subsampled too. Predicting a 600-coefficient model over half a million
-# rows builds a design matrix of several gigabytes, and four such models are compared
-# below. Every model in this section is scored on the same subsample, so the
-# comparison between them - which is the whole point - is unaffected.
+# Reduce the data set for easier processing (for this report only)
 inter_test <- slice_sample(inter_test, n = min(150000, nrow(inter_test)))
 
+# Print out the metrics
 cat("Interaction models fitted on ", format(nrow(inter_fit), big.mark = ","),
     " rows, scored on ", format(nrow(inter_test), big.mark = ","), "\n", sep = "")
 cat("Levels: EventRoot ", nlevels(droplevels(inter_fit$EventRoot)),
@@ -2077,7 +2074,7 @@ cat("Levels: EventRoot ", nlevels(droplevels(inter_fit$EventRoot)),
     ", GeoSmall ", nlevels(droplevels(inter_fit$GeoSmall)), "\n", sep = "")
 ```
 
-The comparison has to be like for like, so the additive model is refitted on exactly the same rows and the same collapsed factors. Only then is the nested test meaningful.
+The comparison has to be just. So the additive model is refitted on exactly the same rows and the same collapsed factors. Only then is the nested test meaningful.
 
 ```{r tone-model-5, cache=TRUE}
 
@@ -2098,11 +2095,13 @@ tone_model_5 <- lm(AvgTone ~ EventRoot * Actor1Small + EventRoot * GeoSmall +
                              Actor2Type + GeoType,
                    data = inter_fit)
 
+# Create a list for the table
 inter_models <- list("Additive reference"        = tone_additive_ref,
                      "+ EventType x Actor1"      = tone_model_5a,
                      "+ EventType x Location"    = tone_model_5b,
                      "+ both interactions"       = tone_model_5)
 
+# Create table data
 inter_tab <- data.frame(
   Model      = names(inter_models),
   Terms      = sapply(inter_models, function(m) m$rank),
@@ -2112,6 +2111,7 @@ inter_tab <- data.frame(
   row.names  = NULL
 )
 
+# Show data itself
 knitr::kable(inter_tab, format = "latex", booktabs = TRUE,
              col.names = c("Model", "Coefficients", "Training R2", "Test RMSE"),
              caption = "Interaction models for tone, all fitted on the same rows",
@@ -2121,48 +2121,59 @@ knitr::kable(inter_tab, format = "latex", booktabs = TRUE,
 
 ```{r tone-interaction-tests, cache=TRUE, results='asis'}
 
-# Are the interactions statistically real?
+# Test for the interactions
 inter_anova <- anova(tone_additive_ref, tone_model_5)
+
+# Print out the results
 cat("F-test, additive vs both interactions: F = ", round(inter_anova$F[2], 2),
     " on ", inter_anova$Df[2], " and ", inter_anova$Res.Df[2], " df",
     ", p = ", format.pval(inter_anova$`Pr(>F)`[2], digits = 3), "\n", sep = "")
 
-# ...and does that buy anything out of sample?
+# Calculate the RMSEs for comparisons
 rmse_add_ref   <- rmse(inter_test$AvgTone, predict(tone_additive_ref, inter_test))
 rmse_tone_5    <- rmse(inter_test$AvgTone, predict(tone_model_5, inter_test))
+
+# Print out metries
 cat("Extra coefficients spent          : ", tone_model_5$rank - tone_additive_ref$rank, "\n", sep = "")
 cat("Held-out RMSE improvement         : ",
     round(100 * (1 - rmse_tone_5 / rmse_add_ref), 3), "%\n", sep = "")
 
-# Empty cells: not every event type occurs with every actor role in every country
+# Print out the remaining cells
 cat("Coefficients that could not be estimated (empty cells): ",
     sum(is.na(coef(tone_model_5))), "\n", sep = "")
 ```
 
-This is the most useful negative result in the project, and it is worth reading slowly.
+This is the most useful negative result in the project, and it is worth reading thoroughly:
 
-The F-test is emphatic: the interactions are real, with a p-value indistinguishable from zero. The training R-squared rises too, as it always will when terms are added. The held-out error, meanwhile, barely moves - well under a fifth of a percent, bought with several hundred extra coefficients. All three statements are true at once, and they are not in conflict. With tens of thousands of rows, an F-test will detect effects far too small to be of any practical use; it answers "is this effect exactly zero?", which is almost never the question worth asking. The held-out error answers "does knowing this help?", and here it says no.
+The F-test is emphatic: the interactions are real, with a p-value indistinguishable from zero. The training R-squared rises too, as it always will when terms are added. The held-out error, meanwhile, barely moves - well under a fifth of a percent, bought with several hundred extra coefficients. All three statements are true at once, and they are not in conflict. With tens of thousands of rows, an F-test will detect effects far too small to be of any practical use; it answers "is this effect exactly zero?", which is almost never the question worth asking. The held-out error answers "does knowing this help?", and here it says no. The cost is processing power and memory for no immediate gain. 
 
 The practical reading is that the additive model was an acceptable simplification after all. The tone attached to an event type is roughly the same wherever it happens and whoever is involved - "assault" reads negatively in much the same way in every country in the data. That is a mildly interesting finding in its own right, and it means Tone Model #3 can be preferred over its more elaborate successor without apology.
 
 A structural caveat: not every event type occurs with every actor role in every country, so some interaction cells are empty and their coefficients cannot be estimated. The count is printed above. This is expected with crossed categorical predictors, does not affect the fitted values, and is one more reason to be wary of the model with the most terms.
 
-```{r tone-interaction-plot, cache=TRUE, fig.width=6.5, fig.height=4.2, fig.align='center', fig.cap="Mean tone by event type for the six most frequent Actor1 roles. Parallel lines would mean no interaction; the ordering is broadly preserved across roles.", out.width='13.0 cm', out.height='7 cm'}
+Let's visualize how, an interaction would look like if it mattered: lines that cross rather than # lines that shift up and down together.
 
-# What an interaction would look like if it mattered: lines that cross rather than
-# lines that shift up and down together.
+```{r tone-interaction-plot, cache=TRUE, fig.width=6.5, fig.height=4.2, fig.align='center', fig.cap="Mean tone by event type.", out.width='13.0 cm', out.height='7 cm'}
+
+#  Filter out the top roles
 top_roles <- inter_fit %>% count(Actor1Small, sort = TRUE) %>%
   filter(Actor1Small != "Other") %>% slice_head(n = 6) %>% pull(Actor1Small)
 
+# Create plot data
 inter_plot_data <- inter_fit %>%
+  # Only take the actor 1 in top roles
   filter(Actor1Small %in% top_roles) %>%
+  # Add action
   mutate(Action = event_root_defs[as.character(EventRoot)]) %>%
+  # Remove none valid data
   filter(!is.na(Action)) %>%
+  # Group by action/actor 1 and sum up average tone
   group_by(Action, Actor1Small) %>%
   summarise(MeanTone = mean(AvgTone), Events = n(), .groups = "drop") %>%
-  # Cells with a handful of events produce meaningless means
+  # Remove cells with a handful of events. 
   filter(Events >= 50)
 
+# Plot diagram
 ggplot(inter_plot_data,
        aes(x = reorder(Action, MeanTone), y = MeanTone,
            colour = Actor1Small, group = Actor1Small)) +
@@ -2171,9 +2182,10 @@ ggplot(inter_plot_data,
   geom_hline(yintercept = 0, linetype = 2, colour = "red") +
   coord_flip() +
   # Set legends
-  labs(title = "Does actor role change the tone of an event type?",
+  labs(title = "Tone changes based on actor role for event types",
        x = NULL, y = "Mean AvgTone", colour = NULL) +
   theme_minimal() +
+    # Add styling
     theme(
       axis.text.y = element_text(size = 6),
       axis.text.y.right = element_text(size = 6),
@@ -2186,7 +2198,7 @@ ggplot(inter_plot_data,
 
 The figure shows both halves of the result at once. The dominant pattern is the shared one: whichever actor role is involved, the event types run in much the same order, from assault and coercion at the negative end up to diplomatic cooperation at the positive end. Police actors (`COP`) sit below the rest almost everywhere, business actors (`BUS`) above them - offsets, which is what an additive model represents.
 
-But the lines are not tidily parallel either. They cross in places, and the crossings are why the F-test finds something: the interaction is not literally zero. What the held-out error adds is the missing piece of context - those departures are small relative to the scatter within each cell, so a model that memorises them predicts new articles no better than one that ignores them. A statistically real effect and a practically useless one are perfectly capable of being the same effect.
+But the lines are not tidily parallel either. They cross in places, and the crossings are why the F-test finds something: the interaction is not literally zero. What the held-out error adds is the missing piece of context - those departures are small relative to the scatter within each cell, so a model that memorizes them predicts new articles no better than one that ignores them. A statistically real effect and a practically useless one are perfectly capable of being the same effect.
 
 ## Does the Goldstein scale predict tone?
 
@@ -2194,10 +2206,14 @@ The introduction drew a distinction between the Goldstein scale - a fixed theore
 
 ```{r tone-goldstein, cache=TRUE, results='asis'}
 
+# Calculate the Goldstein/Tone correlation
 goldstein_tone_cor <- cor(model_data$GoldsteinScale, model_data$AvgTone,
                           use = "complete.obs")
+
+# Fit the model
 tone_goldstein <- lm(AvgTone ~ GoldsteinScale, data = fit_set)
 
+# Print out metrics
 cat("Correlation GoldsteinScale / AvgTone : ", round(goldstein_tone_cor, 4), "\n", sep = "")
 cat("R-squared, Goldstein alone           : ",
     round(summary(tone_goldstein)$r.squared, 4), "\n", sep = "")
@@ -2205,12 +2221,14 @@ cat("R-squared, EventRoot alone           : ",
     round(summary(tone_model_1)$r.squared, 4), "\n", sep = "")
 ```
 
-There is a clear positive relationship - cooperative event types do attract more positive coverage - but the event type used as a plain category beats the Goldstein number. That is what one would expect: Goldstein compresses each event type into a single point on a line, and the ordering it imposes is not quite the ordering the media actually uses. The distinction the introduction drew between a fixed label and a measurement turns out to be worth the space it took.
+There is a clear positive relationship - cooperative event types do attract more positive coverage - but the event type used as a plain category beats the Goldstein number. That is what one would expect: Goldstein compresses each event type into a single point on a line, and the ordering, it imposes, is not quite the ordering the media actually uses. The distinction the introduction drew between a fixed label and a measurement turns out to be worth the space it took.
 
 ## Tone results
+Let's summarize what, we've seen regarding the tone: 
 
-```{r tone-results, cache=TRUE, results='asis'}
+```{r tone-results1, cache=TRUE, results='asis'}
 
+# Create data for the table
 tone_results <- data.frame(
   Model = c("Baseline (training mean)",
             "Tone Model #1 - event type",
@@ -2219,18 +2237,25 @@ tone_results <- data.frame(
             "Tone Model #4 - regression tree"),
   Test_RMSE = c(rmse_tone_baseline, rmse_tone_1, rmse_tone_2, rmse_tone_3, rmse_tone_4)
 ) %>%
+  # Add addition colums for the Improvements and RMSE
   mutate(
     Improvement = paste0(round(100 * (1 - Test_RMSE / rmse_tone_baseline), 2), "%"),
     Test_RMSE = round(Test_RMSE, 4)
   )
 
+# Show table
 knitr::kable(tone_results, format = "latex", booktabs = TRUE,
              col.names = c("Model", "Test RMSE", "Improvement vs baseline"),
              caption = "Held-out performance of the tone models (AvgTone scale)",
              label = "tone-results") %>%
   kableExtra::kable_styling(latex_options = "HOLD_position")
+```
 
-# The comparison that matters: same predictors, same split, two different responses
+Let's compare the models and get improvements if any:
+
+```{r tone-results2, cache=TRUE, results='asis'}
+
+# Print out the metrics
 cat("\nCoverage models, best improvement over baseline: ",
     round(100 * (1 - min(rmse_model_1, rmse_model_2, rmse_model_3) / rmse_baseline), 2),
     "%\n", sep = "")
@@ -2239,8 +2264,11 @@ cat("Tone models, best improvement over baseline    : ",
                  rmse_tone_baseline), 2), "%\n", sep = "")
 ```
 
-```{r tone-predicted-vs-actual, cache=TRUE, fig.width=6.5, fig.height=3.5, fig.align='center', fig.cap="Predicted against actual tone on the held-out test set, on a random sample of 5,000 test rows.", out.width='14.0 cm', out.height='6.8 cm'}
+Selecting the best tone model, let's visualize the predicted tone against the actual tone.
 
+```{r tone-predicted-vs-actual, cache=TRUE, fig.width=6.5, fig.height=3.5, fig.align='center', fig.cap="Predicted vs actual tone on a random sample of 5,000 test rows.", out.width='14.0 cm', out.height='6.8 cm'}
+
+# Select the best tone
 best_tone <- if (rmse_tone_4 < rmse_tone_3) {
   predict(tone_model_4, test_set)
 } else {
@@ -2248,12 +2276,15 @@ best_tone <- if (rmse_tone_4 < rmse_tone_3) {
 }
 
 set.seed(5)
+# Select a sample of the test set
 tone_rows <- sample(seq_len(nrow(test_set)), 5000)
+# Create data 
 tone_pred_df <- data.frame(
   Actual    = test_set$AvgTone[tone_rows],
   Predicted = best_tone[tone_rows]
 )
 
+# Plot the diagram
 ggplot(tone_pred_df, aes(x = Predicted, y = Actual)) +
   geom_point(alpha = 0.15, size = 0.6) +
   # A perfect model would put every point on this line
@@ -2263,6 +2294,7 @@ ggplot(tone_pred_df, aes(x = Predicted, y = Actual)) +
   labs(title = "Predicted vs actual tone (best model, held-out data)",
        x = "Predicted AvgTone", y = "Actual AvgTone") +
   theme_minimal() +
+    # Add styling
     theme(
       axis.text.y = element_text(size = 6),
       axis.text.y.right = element_text(size = 6),
@@ -2277,15 +2309,14 @@ The scatter is still wide - a quarter of the variance explained is not a precisi
 
 The conclusion this chapter supports is a narrow one, and worth stating carefully. The event attributes GDELT records carry a usable amount of information about **how** an event is written about, and almost none about **how much** it is written about. That is a statement about which quantities are predictable from this file. It is not a claim about why coverage reads the way it does, and it is not a finding about media bias - that an assault is described in more negative language than a diplomatic visit is a property of the English language, not an editorial choice.
 
-\newpage
-
 # Conclusion
+Looking back on this project, let's take a look at the results:
 
 ## What did we learn about media coverage?
 
 The question this project set out to answer was whether an event's recorded characteristics predict how much the world's media writes about it. The answer, on a month of GDELT and after three models, is: **barely**.
 
-The second question, added once the first had run its course, was whether those same characteristics predict *how* the coverage reads rather than how much of it there is. That answer is different: **substantially better, though still far from precise**.
+The second question, added once the first had run its course, was whether those same characteristics predict *how* the coverage reads rather than how much of it there is. That answer is different: **substantially better, though still far from precise**. It does not seem, that more characteristics add any more precision in how, the tone changes. 
 
 Set side by side on the same held-out articles, the best coverage model improved on guessing the mean by around four percent, while the best tone model improved by around fourteen - roughly three times as much, from exactly the same predictors. The split in the results is the most interesting thing the project produced, and it is worth stating plainly: **GDELT's event attributes describe the character of an event well enough to anticipate the language used about it, and not well enough to anticipate how much attention it receives.** Those are different problems, and only one of them is solvable from this file.
 
@@ -2312,7 +2343,7 @@ That last point is the methodological lesson of the project, and it applies well
 Two properties of the data deserve to be carried forward by anyone using GDELT for similar work, because neither is documented prominently and both change how the data must be handled:
 
 1. **Rows are not independent.** Around 577,000 articles produced 2.8 million event rows. Any analysis treating rows as independent observations will badly overstate its own confidence.
-2. **The response is quantized.** `NumArticles` is heaped on small round integers, with even values strongly favoured. Group medians can only land on a handful of distinct values, which puts a floor under how small a difference is even detectable.
+2. **The response is quantized.** `NumArticles` is heaped on small round integers, with even values strongly favored. Group medians can only land on a handful of distinct values, which puts a floor under how small a difference is even detectable.
 
 As stated in the disclaimer at the start, a null result was always an acceptable outcome of this project, and on the original question that is what the data produced: media *attention*, as GDELT records it, is not predictable from the attributes GDELT records about the event. That is a real finding about the data set rather than a failure of the modelling, and no amount of additional terms in the formula would change it.
 
@@ -2325,7 +2356,7 @@ One boundary is worth restating, since this chapter is the place a reader is mos
 For coverage volume, nothing here suggests a better regression on the same columns would help; the useful directions all involve changing either the data or the question. The tone models are in a different position - they work well enough that improving them is worth the effort, and the last two suggestions below apply mainly to those.
 
 * **Widen the time window.** One month gives no seasonality and no way to separate "this type of event gets covered" from "August happened to contain one very large story". Three or more months would also allow a *later* month to be held out instead of a random split, turning the exercise into genuine forecasting rather than interpolation.
-* **Change the question to classification.** Instead of predicting the count, predict whether an event finishes in the top 5% of coverage - did it go viral? A rare-event classification problem has cleaner and more interpretable metrics than an R-squared of a few percent, and "which events break out" is arguably the more interesting question anyway.
+* **Change the question to classification.** Instead of predicting the count, predict whether an event finishes in the top 5% of coverage - did it go viral? A rare-event classification problem has cleaner and more interpretative metrics than an R-squared of a few percent, and "which events break out" is arguably the more interesting question anyway.
 * **Aggregate to the story rather than the event row.** Grouping the near-duplicate rows into stories would remove the dependence problem at source and give a smaller, cleaner data set in which each observation is genuinely one thing that happened. 
 * **Bring in data GDELT does not have.** The variation this project could not explain is presumably driven by things absent from the file entirely: what else was competing for attention that day, whether the story had a recognizable name  attached, how long the news cycle around it had already been running. Predicting attention from an event record alone was always going to be attempting the problem with one input missing.
 * **Use the GDELT Mentions table.** The Event export used here records a coverage snapshot per event. GDELT publishes a separate Mentions stream tracking how coverage of an event accumulates over time, which would allow the response to be a trajectory rather than a single number - and would sidestep the quantization seen in `NumArticles`.
