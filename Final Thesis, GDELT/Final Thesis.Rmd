@@ -1288,7 +1288,7 @@ cat("Ungeolocated events: median ",
 
 Across the seven real regions the same flat picture appears once more. North America supplies by far the most events but sits exactly on the overall median for coverage; East Asia & Pacific and South Asia edge very slightly above it, and the rest are indistinguishable. As with the actor roles the medians can only land on a couple of distinct values, because the underlying counts are heaped on small round integers. Where an event happens is no better a predictor of how much gets written about it than what happened or who was involved.
 
-The interesting row in the table is the one that is not a region at all. Events GDELT could not place on the map attract a median of about ten articles against four or five everywhere else - roughly two and a half times the coverage of a geolocated event. That is worth flagging rather than filtering away: it is consistent with the biggest stories being the ones that resist being pinned to a single town or country, though this data cannot confirm that reading, and it is a reminder that the missingness in `ActionGeo_CountryCode` is not random with respect to the response variable. Any model that quietly drops ungeolocated rows would be discarding the best-covered events in the data set.
+The interesting row in the table is the one that is not a region at all. Events GDELT could not place on the map attract a median of about ten articles against four or five everywhere else - roughly two and a half times the coverage of a geolocated event. That is worth flagging rather than filtering away: it is consistent with the biggest stories being the ones that resist being pinned to a single town or country, though this data cannot confirm that reading, and it is a reminder that the lack of `ActionGeo_CountryCode` is not random with respect to the response variable. Any model that quietly drops ungeolocated rows would be discarding the best-covered events in the data set.
 
 
 The source list is dominated by a small number of outlets, several of them from the same country. "Global media coverage" in this data set means something considerably narrower than the name suggests, and any coefficient on a geography variable in the model later has to be read with that in mind.
@@ -1661,16 +1661,24 @@ cat("Model #2 training R-squared : ", round(summary(model_2)$r.squared, 4), "\n"
 cat("Improvement over Model #1   : ",
     round(100 * (1 - rmse_model_2 / rmse_model_1), 2), "%\n", sep = "")
 
-# Is the extra term earning its degrees of freedom, or just fitting noise?
+```
+
+Is the extra term earning its degrees of freedom, or just fitting noise?
+
+```{r model-2-1, cache=TRUE, results='asis'}
+
 # Use the anova to test
 anova_tab <- anova(model_1, model_2)
 # Print out results
 cat("F-test for adding Domain    : F = ", round(anova_tab$F[2], 1),
     ", p = ", format.pval(anova_tab$`Pr(>F)`[2], digits = 3), "\n", sep = "")
 
-# How much of the work is that one predictor doing on its own? Fitting it alone puts
-# the comparison on a fair footing: one column about the publisher against eight
-# columns about the event.
+```
+
+ How much of the work is that one predictor doing on its own? Fitting it alone puts the comparison on a fair footing: one column about the publisher against eight columns about the event.
+
+```{r model-2-2, cache=TRUE, results='asis'}
+# Fit the new model
 model_domain_only <- lm(Coverage ~ Domain, data = fit_set)
 # Print out metrics
 cat("\nR-squared, Domain alone     : ",
@@ -2328,7 +2336,7 @@ The concrete findings on coverage volume:
 * **Geography depends on how finely it is cut.** Rolled up to seven world regions the medians are flat. At country level it is the single most-used predictor in the regression tree, ahead of source domain. Both statements are true, and neither is worth much: the tree is dividing up an explained share of a few percent, so being the largest contributor to it still means explaining very little.
 * **The publisher is competitive with the event.** One predictor naming the outlet improved the model about as much as several event attributes together, using one column.
 * **A flexible model does not help.** The regression tree, free to find any interaction it liked, performed about the same as the linear model. The ceiling is the data, not the functional form.
-* **Ungeolocated events are the best covered.** Events GDELT cannot place on a map draw roughly two and a half times the median coverage of ones it can - so the missingness is informative, and dropping those rows would discard the most-covered events.
+* **Ungeolocated events are the best covered.** Events GDELT cannot place on a map draw roughly two and a half times the median coverage of ones it can - so the lack of location is informative, and dropping those rows would discard the most-covered events.
 
 And on tone:
 
